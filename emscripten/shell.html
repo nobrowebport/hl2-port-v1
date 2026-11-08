@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en-us">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Half-Life 2 · Web</title>
+<style>{{{ SHELL_CSS }}}</style>
+<style>
+:root{color-scheme:dark}[hidden]{display:none!important}body{background:#171717;color:#ddd}#status{color:#bbb}
+div.emscripten_border{border-color:#454545;overflow:auto;clear:both}#emscripten_logo{height:auto}
+#controls{max-width:calc(100vw - 24px)}#controls>span{display:inline-block;margin-bottom:5px}#map-choice{max-width:220px}
+.spinner{background-color:#e77e1a;border-left-color:#444;border-right-color:#444;border-bottom-color:#444;border-top-color:#ddd}
+#output{background:#0a0a0a;color:#ddd;border-color:#444;box-sizing:border-box}
+input[type=button],button{background:#303030;border:1px solid #686868;border-radius:2px;color:#eee;padding:3px 9px;cursor:pointer}input[type=checkbox]{accent-color:#e77e1a}
+button:hover,input[type=button]:hover{background:#414141}button:focus-visible,input:focus-visible{outline:2px solid #e77e1a}
+dialog{background:#252525;color:#ddd;border:1px solid #666;padding:28px;max-width:calc(100vw - 32px)}dialog::backdrop{background:#000b}dialog strong{color:#e77e1a;font-size:22px}dialog p{line-height:1.7}
+@media(max-width:600px){#controls{float:none;display:block;margin:12px 20px}#emscripten_logo{width:180px}#status{max-width:calc(100vw - 40px);margin-bottom:15px;overflow-wrap:anywhere}}
+</style>
+</head>
+<body>
+<img id="emscripten_logo" src="assets/hl2-logo.png" alt="Half-Life 2">
+<div class="spinner" id="spinner"></div>
+<div class="emscripten" id="status" role="status">Downloading…</div>
+<span id="controls">
+ <span><input type="checkbox" id="resize"><label for="resize">Resize canvas</label></span>
+ <span><input type="checkbox" id="pointerLock" checked><label for="pointerLock">Lock/hide mouse pointer</label> &nbsp;&nbsp;&nbsp;</span>
+ <span><input type="button" id="fullscreen" value="Fullscreen"></span>
+ <span><button id="credits-button">Credits</button></span>
+ <span><label for="map-choice">Map</label> <select id="map-choice" aria-label="Map"><option value="d1_town_01">Ravenholm — d1_town_01</option></select> <button id="load-map">Load map</button></span>
+ <span><input type="checkbox" id="mute"><label for="mute">Mute</label> <label for="volume">Volume</label> <input id="volume" type="range" min="0" max="100" value="25" style="width:75px;vertical-align:middle"></span>
+</span>
+<div class="emscripten"><progress value="0" max="100" id="progress" hidden></progress></div>
+<div class="emscripten_border"><canvas class="emscripten" id="canvas" width="1280" height="720" oncontextmenu="event.preventDefault()" tabindex="0" aria-label="Half-Life 2 game"></canvas></div>
+<textarea id="output" rows="8" readonly aria-label="Engine log"></textarea>
+<dialog id="credits"><h2>Credits</h2><p><strong>windows</strong><br>Discord: <b>therealwindows</b></p><p>Half-Life 2 &amp; Source — Valve<br>Engine — nillerusr and contributors<br>Web engine base — weliveinhell and contributors</p><form method="dialog"><button>Close</button></form></dialog>
+<script>
+var statusElement=document.getElementById('status'),progressElement=document.getElementById('progress'),spinnerElement=document.getElementById('spinner'),canvasElement=document.getElementById('canvas'),outputElement=document.getElementById('output');
+canvasElement.widthNative=1280;canvasElement.heightNative=720;
+document.getElementById('credits-button').onclick=()=>document.getElementById('credits').showModal();
+document.getElementById('fullscreen').onclick=()=>Module.requestFullscreen(document.getElementById('pointerLock').checked,document.getElementById('resize').checked);
+canvasElement.addEventListener('webglcontextlost',e=>{e.preventDefault();statusElement.textContent='Graphics context lost. Reload to restart.';});
+let pendingLog='',logTimer;
+function queueLog(args){
+ pendingLog=(pendingLog+'\n'+args.join(' ')).slice(-100000);
+ if(!logTimer)logTimer=setTimeout(()=>{
+  const follow=outputElement.scrollTop+outputElement.clientHeight>=outputElement.scrollHeight-20;
+  const text=pendingLog;pendingLog='';logTimer=null;
+  outputElement.value=(outputElement.value+text).slice(-100000);if(follow)outputElement.scrollTop=outputElement.scrollHeight;
+  console.log(text);
+ },100);
+}
+var Module={canvas:canvasElement,print(...args){queueLog(args);},printErr(...args){queueLog(args);},setStatus(text){statusElement.textContent=text;spinnerElement.hidden=!text;},onAbort(reason){Module.silenceAudio?.();statusElement.textContent='Engine stopped: '+reason;spinnerElement.hidden=true;},totalDependencies:0,monitorRunDependencies(left){Module.totalDependencies=Math.max(Module.totalDependencies,left);Module.setStatus(left?'Preparing… ('+(Module.totalDependencies-left)+'/'+Module.totalDependencies+')':'');}};
+if(!crossOriginIsolated)Module.setStatus('This server must enable cross-origin isolation for engine threads.');
+Module.audioMasterVolume=0.25;Module.audioMuted=false;
+try{const saved=JSON.parse(localStorage.getItem('hl2-audio')||'null');if(saved){Module.audioMasterVolume=Math.min(1,Math.max(0,Number(saved.volume)||0));Module.audioMuted=!!saved.muted;}}catch{}
+document.getElementById('volume').value=Module.audioMasterVolume*100;
+document.getElementById('mute').checked=Module.audioMuted;
+const launchParameters=new URLSearchParams(location.search),requestedMap=launchParameters.get('map');
+try{Module.rtxLighting=localStorage.getItem('hl2-rtx-lighting')==='true';}catch{}
+Module.saveLightingPreference=enabled=>{try{localStorage.setItem('hl2-rtx-lighting',String(!!enabled));}catch{}};
+if(requestedMap&&/^(d1_(trainstation|canals|eli|town)_\w+|background0[1-4])$/.test(requestedMap))Module.startMap=requestedMap;
+Module.onAssetManifest=manifest=>{
+ const select=document.getElementById('map-choice');select.replaceChildren();
+ const ordered=Object.keys(manifest.maps).sort((a,b)=>{
+  const group=n=>n.startsWith('background')?0:n.includes('trainstation')?1:n.includes('canals')?2:n.includes('eli')?3:4;
+  return group(a)-group(b)||a.localeCompare(b);
+ });
+ for(const name of ordered){const option=document.createElement('option');option.value=name;option.textContent=(name.startsWith('background')?'Menu':name.includes('canals')?'Canals':name.includes('trainstation')?'City 17':name.includes('eli')?'Black Mesa East':'Ravenholm')+' — '+name;select.append(option);}
+ select.value=Module.startMap||'d1_town_01';
+};
+document.getElementById('load-map').onclick=()=>{const url=new URL(location.href);url.searchParams.set('map',document.getElementById('map-choice').value);location.href=url.href;};
+if(launchParameters.get('qa')==='render'){Module.debugQA=true;Module.audioMuted=true;document.getElementById('mute').checked=true;}
+Module.reportLightmap=(width,height,bytes,kind='CPU')=>{
+ if(!Module.debugQA)return;
+ const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+ const context=canvas.getContext('2d');context.putImageData(new ImageData(new Uint8ClampedArray(bytes),width,height),0,0);
+ const id=kind.toLowerCase()+'-lightmap';let picture=document.getElementById(id);if(!picture){picture=document.createElement('img');picture.id=id;picture.alt=kind+' lightmap 0';picture.style.display='none';document.body.append(picture);}picture.src=canvas.toDataURL();
+};
+Module.reportShader=(name,source)=>{if(!Module.debugQA)return;const text=document.createElement('textarea');text.hidden=true;text.setAttribute('aria-label','Shader diagnostic '+name);text.value=source;document.body.append(text);};
+function applyAudio(){
+ Module.audioMasterVolume=Number(document.getElementById('volume').value)/100;
+ Module.audioMuted=document.getElementById('mute').checked;
+ try{localStorage.setItem('hl2-audio',JSON.stringify({volume:Module.audioMasterVolume,muted:Module.audioMuted}));}catch{}
+ const audio=Module.SDL2;
+ if(audio?.audio?.gainNode)audio.audio.gainNode.gain.setTargetAtTime(Module.audioMuted?0:Module.audioMasterVolume,audio.audioContext.currentTime,0.02);
+ if(audio?.audioContext?.state==='suspended')audio.audioContext.resume();
+}
+document.getElementById('volume').oninput=applyAudio;
+document.getElementById('mute').onchange=applyAudio;
+Module.silenceAudio=()=>{
+ Module.audioMuted=true;document.getElementById('mute').checked=true;
+ const audio=Module.SDL2;
+ if(audio?.audio?.gainNode)audio.audio.gainNode.gain.value=0;
+ audio?.audioContext?.suspend();
+};
+// A muted, pre-gain signal probe for local QA; never runs in normal play.
+if(launchParameters.has('qa')){
+ const audioCheck=document.createElement('button');audioCheck.textContent='Check muted audio';audioCheck.onclick=async()=>{const context=Module.SDL2?.audioContext;Module.print('Audio context: '+(context?.state||'not created'));if(context){await context.resume();Module.print('Audio context after activation: '+context.state);}};document.body.append(audioCheck);
+ let probe,quiet,readings=0;
+ const probeTimer=setInterval(()=>{
+  const audio=Module.SDL2;
+  if(!audio?.audio?.scriptProcessorNode||audio.audioContext.state!=='running')return;
+  if(!probe){probe=audio.audioContext.createAnalyser();probe.fftSize=2048;quiet=audio.audioContext.createGain();quiet.gain.value=0;audio.audio.scriptProcessorNode.connect(probe);probe.connect(quiet);quiet.connect(audio.audioContext.destination);}
+  const samples=new Float32Array(probe.fftSize);probe.getFloatTimeDomainData(samples);
+  let peak=0,energy=0,bad=0;for(const sample of samples){if(!Number.isFinite(sample)){bad++;continue;}peak=Math.max(peak,Math.abs(sample));energy+=sample*sample;}
+  Module.print('Audio signal check: rate='+audio.audioContext.sampleRate+' peak='+peak.toFixed(4)+' rms='+Math.sqrt(energy/samples.length).toFixed(4)+' invalid='+bad);
+  if(++readings>=12){clearInterval(probeTimer);probe.disconnect();quiet.disconnect();}
+ },2000);
+}
+</script>
+{{{ SCRIPT }}}
+</body></html>

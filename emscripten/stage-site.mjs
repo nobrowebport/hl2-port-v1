@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const source=path.resolve('build/install'),target=path.resolve('dist');
+for(const required of ['index.html','index.js','index.wasm','chunks/manifest.json'])if(!fs.existsSync(path.join(source,required)))throw new Error(`Missing built artifact: ${required}`);
+fs.mkdirSync(target,{recursive:true});
+for(const file of fs.readdirSync(source))if(file==='_headers'||/^(index.*\.(html|js|wasm)|lib.*\.so)(\.gz)?$/.test(file))fs.copyFileSync(path.join(source,file),path.join(target,file));
+fs.cpSync(path.join(source,'assets'),path.join(target,'assets'),{recursive:true});
+fs.mkdirSync(path.join(target,'chunks'),{recursive:true});
+const manifest=JSON.parse(fs.readFileSync(path.join(source,'chunks/manifest.json')));
+for(const file of ['manifest.json',...Object.values(manifest.chunks).map(c=>c.file)])fs.copyFileSync(path.join(source,'chunks',file),path.join(target,'chunks',file));
+console.log('Staged the verified runtime in dist/.');
